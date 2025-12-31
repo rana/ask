@@ -1,0 +1,53 @@
+[project]
+name = "ask"
+version = "0.1.0"
+description = "AI conversations through Markdown files"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "Rana", email = "rana@example.com" }]
+dependencies = [
+    "boto3>=1.35.0",
+    "httpx>=0.28.0",
+    "readability-lxml>=0.8.1",
+    "markdownify>=1.2.2",
+]
+
+[project.scripts]
+ask = "ask.cli:main"
+
+# Modern dev dependency management (PEP 735) supported by uv
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "ruff>=0.9.0",
+    "pyright>=1.1.390",
+    "boto3-stubs[bedrock,bedrock-runtime]>=1.35.0", # Critical for strict typing with AWS
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+# Added "T20" (print statements) to ensure IO flows through specific channels
+# Kept "PTH" (pathlib) as discussed
+select = ["E", "F", "I", "UP", "B", "SIM", "PTH", "T20"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+# Removed loose overrides because we added boto3-stubs
+reportMissingTypeStubs = false 
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
