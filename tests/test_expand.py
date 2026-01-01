@@ -20,7 +20,7 @@ def test_expand_single_file_reference() -> None:
         expanded, file_count = expand_references(content, config)
 
         assert file_count == 1
-        assert f"" in expanded
+        assert "" in expanded
         assert "def hello():" in expanded
         assert "" in expanded
 

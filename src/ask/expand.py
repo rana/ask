@@ -205,7 +205,7 @@ def _expand_directory(path: str, recursive: bool, config: Config) -> tuple[str, 
 
 def _is_binary_file(path: Path) -> bool:
     """Check if a file is binary."""
-    with open(path, "rb") as f:
+    with path.open("rb") as f:
         preview = f.read(512)
     return b"\x00" in preview
 

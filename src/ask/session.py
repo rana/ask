@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TextIO
 
 from ask.config import load_config
 from ask.errors import ParseError
@@ -31,7 +32,6 @@ def read_session(path: str) -> Session:
     if not turns:
         raise ParseError("No turns in session", "Add a turn header like: # [1] Human")
 
-    # Find last human turn index
     last_human_idx = -1
     for i, turn in enumerate(turns):
         if turn.role == "Human":
@@ -61,19 +61,15 @@ def validate_session(session: Session) -> None:
             "Add a new human turn before running ask",
         )
 
-    # Check last human turn has content (not just underscore marker)
     last_human = session.turns[session.last_human_turn_index]
     content = last_human.content.strip()
 
-    # Remove underscore marker for content check
     if content == "_":
         raise ParseError(
             f"Turn {last_human.number} has no content",
             "Add your question before the _ marker",
         )
 
-    # Content with just underscore at end is valid
-    # Content must have something besides underscore
     content_without_marker = content.replace("_", "").strip()
     if not content_without_marker:
         raise ParseError(
@@ -91,7 +87,6 @@ def expand_and_save_session(path: str, session: Session) -> tuple[bool, int]:
 
     last_human = session.turns[session.last_human_turn_index]
 
-    # Check if there are any references to expand
     if "[[" not in last_human.content:
         return False, 0
 
@@ -100,12 +95,9 @@ def expand_and_save_session(path: str, session: Session) -> tuple[bool, int]:
     if expanded_content == last_human.content:
         return False, 0
 
-    # Read original file and replace the turn content
     file_path = Path(path)
     original = file_path.read_text(encoding="utf-8")
 
-    # Find and replace the turn content
-    # We need to find the turn header and replace everything until next turn or EOF
     lines = original.split("\n")
     turn_header = f"# [{last_human.number}] Human"
 
@@ -115,7 +107,7 @@ def expand_and_save_session(path: str, session: Session) -> tuple[bool, int]:
     for i, line in enumerate(lines):
         if line.strip() == turn_header:
             start_idx = i
-        elif start_idx is not None and line.startswith("# [") and "] " in line:
+        elif start_idx is not None and line.startswith("# ["):
             end_idx = i
             break
 
@@ -125,9 +117,8 @@ def expand_and_save_session(path: str, session: Session) -> tuple[bool, int]:
     if end_idx is None:
         end_idx = len(lines)
 
-    # Rebuild the file
-    new_lines = lines[: start_idx + 1]  # Include the turn header
-    new_lines.append("")  # Blank line after header
+    new_lines = lines[: start_idx + 1]
+    new_lines.append("")
     new_lines.append(expanded_content)
     new_lines.extend(lines[end_idx:])
 
@@ -144,19 +135,17 @@ def turns_to_messages(turns: list[Turn]) -> list[Message]:
     for turn in turns:
         role: str = "user" if turn.role == "Human" else "assistant"
 
-        # Remove the underscore marker from content for API
         content = turn.content
         if content.endswith("\n_"):
             content = content[:-2].rstrip()
         elif content.endswith("_"):
             content = content[:-1].rstrip()
 
-        # Skip empty content
         if not content.strip():
             continue
 
         message: Message = {
-            "role": role,  # type: ignore[typeddict-item]
+            "role": role,
             "content": [MessageContent(text=content)],
         }
         messages.append(message)
@@ -172,7 +161,7 @@ class SessionWriter:
         self.next_turn_number = next_turn_number
         self.buffer: list[str] = []
         self._started = False
-        self._file_handle = open(self.path, "a", encoding="utf-8")  # noqa: SIM115
+        self._file_handle: TextIO = open(self.path, "a", encoding="utf-8")
 
     def write(self, text: str) -> None:
         """Write a chunk of AI response."""
@@ -193,14 +182,11 @@ class SessionWriter:
     def end(self, interrupted: bool = False) -> None:
         """Finalize the response and append next human turn."""
         if not self._started:
-            # No content was written, don't create empty turn
             self._file_handle.close()
             return
 
-        # Close the 6-backtick wrapper
         self._file_handle.write("\n``````\n")
 
-        # Append next human turn
         next_human_number = self.next_turn_number + 1
         suffix = " (interrupted)" if interrupted else ""
         human_turn = f"\n# [{next_human_number}] Human{suffix}\n\n_\n"

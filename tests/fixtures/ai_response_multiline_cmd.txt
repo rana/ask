@@ -1,0 +1,6 @@
+<!-- ask:command -->
+```bash
+echo "line 1" && \
+echo "line 2"
+```
+<!-- /ask:command -->

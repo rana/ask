@@ -1,0 +1,11 @@
+<!-- file: src/main.py -->
+```python
+print("hello")
+```
+<!-- /file -->
+
+<!-- ask:command -->
+```bash
+python src/main.py
+```
+<!-- /ask:command -->

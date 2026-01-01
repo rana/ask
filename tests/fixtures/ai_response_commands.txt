@@ -1,0 +1,15 @@
+Run this:
+
+<!-- ask:command -->
+```bash
+uv add bcrypt
+```
+<!-- /ask:command -->
+
+Then this:
+
+<!-- ask:command -->
+```bash
+uv run pytest
+```
+<!-- /ask:command -->

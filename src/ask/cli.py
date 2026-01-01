@@ -7,6 +7,7 @@ import signal
 import sys
 from pathlib import Path
 
+from ask.apply import apply_session, format_applied_block, insert_applied_block
 from ask.bedrock import extract_region, find_profile, stream_completion
 from ask.config import ensure_config, get_config_path, load_config, save_config, update_config
 from ask.errors import AskError, ConfigError
@@ -20,19 +21,18 @@ from ask.session import (
 )
 from ask.tokens import estimate_tokens
 from ask.types import Config, StreamChunk, StreamEnd
+from ask.workspace import find_workspace
 
 
 def cmd_init(args: argparse.Namespace) -> int:
     """Initialize a new session file."""
     path = args.path or "session.md"
 
-    # Handle directory paths
     if path.endswith("/") or path.endswith("\\"):
         path = f"{path}session.md"
 
     file_path = Path(path)
 
-    # Check if it's a directory
     if file_path.exists() and file_path.is_dir():
         file_path = file_path / "session.md"
 
@@ -41,16 +41,13 @@ def cmd_init(args: argparse.Namespace) -> int:
         output.info("Delete it to start fresh")
         return 1
 
-    # Create parent directories
     file_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Write initial content
     content = "# [1] Human\n\n_\n"
     file_path.write_text(content, encoding="utf-8")
 
     output.success(f"Created {file_path}")
 
-    # Ensure config exists
     try:
         ensure_config()
     except Exception as e:
@@ -69,7 +66,6 @@ def cmd_chat(args: argparse.Namespace) -> int:
     """Continue the conversation."""
     session_path = args.session or "session.md"
 
-    # Check file exists
     if not Path(session_path).exists():
         if session_path == "session.md":
             output.error("No session.md found")
@@ -82,25 +78,22 @@ def cmd_chat(args: argparse.Namespace) -> int:
         config = load_config()
         model_type = args.model or config.model
 
-        # Read session
         session = read_session(session_path)
 
-        # Expand references
         expanded, file_count = expand_and_save_session(session_path, session)
         if expanded:
             output.success(f"Expanded {file_count} file{'s' if file_count != 1 else ''}")
             session = read_session(session_path)
 
-        # Validate
         validate_session(session)
 
-        # Find profile
         profile = find_profile(model_type)
         region = extract_region(profile)
 
-        output.meta([("Model", f"{output.model_name(profile.model_id)} {output.dim(f'({region})')}")])
+        output.meta([
+            ("Model", f"{output.model_name(profile.model_id)} {output.dim(f'({region})')}")
+        ])
 
-        # Prepare messages
         messages = turns_to_messages(session.turns)
         input_tokens = estimate_tokens(messages)
         turn_label = "turn" if len(session.turns) == 1 else "turns"
@@ -114,7 +107,6 @@ def cmd_chat(args: argparse.Namespace) -> int:
             output.blank()
             output.warning("Large input may be slow or hit limits")
 
-        # Setup streaming
         next_turn_number = session.turns[-1].number + 1
         writer = SessionWriter(session_path, next_turn_number)
 
@@ -130,7 +122,6 @@ def cmd_chat(args: argparse.Namespace) -> int:
         output.blank()
         output.write(output.dim("Streaming... "))
 
-        # Stream response
         max_tokens = config.max_tokens or 32000
         for event in stream_completion(
             profile.arn,
@@ -145,7 +136,9 @@ def cmd_chat(args: argparse.Namespace) -> int:
                 writer.write(event.text)
                 final_tokens = event.tokens
                 output.progress(
-                    f"{output.dim('Streaming')} {output.cyan(output.number(final_tokens))} {output.dim('tokens')}"
+                    f"{output.dim('Streaming')} "
+                    f"{output.cyan(output.number(final_tokens))} "
+                    f"{output.dim('tokens')}"
                 )
             elif isinstance(event, StreamEnd):
                 final_tokens = event.total_tokens
@@ -156,9 +149,129 @@ def cmd_chat(args: argparse.Namespace) -> int:
         if interrupted:
             output.warning(f"Interrupted at {output.cyan(output.number(final_tokens))} tokens")
         else:
-            output.success(f"Done {output.dim('·')} {output.cyan(output.number(final_tokens))} tokens")
+            output.success(
+                f"Done {output.dim('·')} {output.cyan(output.number(final_tokens))} tokens"
+            )
 
         return 0
+
+    except AskError as e:
+        output.error(e.message)
+        if e.help_text:
+            output.blank()
+            output.info(e.help_text)
+        return 1
+    except Exception as e:
+        ask_error = AskError.from_exception(e)
+        output.error(ask_error.message)
+        if ask_error.help_text:
+            output.blank()
+            output.info(ask_error.help_text)
+        return 1
+
+
+def cmd_apply(args: argparse.Namespace) -> int:
+    """Apply files and commands from AI response."""
+    session_path = args.session or "session.md"
+
+    if not Path(session_path).exists():
+        if session_path == "session.md":
+            output.error("No session.md found")
+            output.info("Run 'ask init' to create session.md")
+        else:
+            output.error(f"File not found: {session_path}")
+        return 1
+
+    try:
+        # Determine what to apply
+        apply_files = True
+        apply_commands = True
+
+        if args.files:
+            apply_commands = False
+        elif args.commands:
+            apply_files = False
+        # --all is default (both True)
+
+        dry_run = args.dry_run
+
+        # Show workspace if defined
+        session_content = Path(session_path).read_text(encoding="utf-8")
+        workspace = find_workspace(session_content)
+
+        if dry_run:
+            output.info(output.dim("Dry run - no changes will be made"))
+            output.blank()
+
+        if workspace:
+            output.meta([("Workspace", str(workspace))])
+
+        # Run apply
+        result = apply_session(
+            session_path,
+            dry_run=dry_run,
+            apply_files=apply_files,
+            apply_commands=apply_commands,
+        )
+
+        # Show results
+        if result.file_results:
+            output.blank()
+            for fr in result.file_results:
+                if fr.error:
+                    output.error(f"{fr.path} - {fr.error}")
+                else:
+                    action_color = output.green if fr.action == "created" else output.cyan
+                    output.success(
+                        f"{fr.path} {output.dim('·')} "
+                        f"{action_color(fr.action)} {output.dim(f'({fr.size}B)')}"
+                    )
+
+        if result.command_results:
+            output.blank()
+            for cr in result.command_results:
+                if cr.status == "OK":
+                    output.success(f"{output.dim('$')} {cr.command}")
+                else:
+                    output.error(f"{output.dim('$')} {cr.command}")
+                    if cr.output:
+                        for line in cr.output.split("\n")[:5]:  # Show first 5 lines
+                            output.info(f"  {output.dim(line)}")
+
+        # Summary
+        output.blank()
+        file_count = len(result.file_results)
+        cmd_count = len(result.command_results)
+
+        if dry_run:
+            parts: list[str] = []
+            if file_count:
+                parts.append(f"{file_count} file{'s' if file_count != 1 else ''}")
+            if cmd_count:
+                parts.append(f"{cmd_count} command{'s' if cmd_count != 1 else ''}")
+            output.info(f"Would apply: {', '.join(parts)}")
+        else:
+            if result.status == "OK":
+                parts = []
+                if file_count:
+                    parts.append(f"{file_count} file{'s' if file_count != 1 else ''}")
+                if cmd_count:
+                    parts.append(f"{cmd_count} command{'s' if cmd_count != 1 else ''}")
+                output.success(f"Applied {', '.join(parts)}")
+
+                # Insert applied block into session
+                applied_block = format_applied_block(result)
+                insert_applied_block(session_path, applied_block)
+                output.info(output.dim(f"Updated {session_path}"))
+            else:
+                output.warning("Apply completed with errors")
+
+                # Still insert the block to record what happened
+                applied_block = format_applied_block(result)
+                insert_applied_block(session_path, applied_block)
+                output.info(output.dim(f"Updated {session_path}"))
+
+        return 0 if result.status == "OK" else 1
 
     except AskError as e:
         output.error(e.message)
@@ -182,7 +295,6 @@ def cmd_cfg(args: argparse.Namespace) -> int:
 
     try:
         if not action:
-            # Show config
             ensure_config()
             config = load_config()
             config_path = get_config_path()
@@ -253,6 +365,29 @@ def cmd_help(args: argparse.Namespace) -> int:
         output.info("  $ ask init session-2.md")
         output.info("  $ ask init notes/research.md")
         output.blank()
+    elif command == "apply":
+        output.blank()
+        output.info(
+            f"{output.bold('ask apply')} {output.dim('—')} "
+            "Apply files and commands from AI response"
+        )
+        output.blank()
+        output.info(output.dim("Usage"))
+        output.info("  ask apply [session] [--dry-run] [--files|--commands|--all]")
+        output.blank()
+        output.info(output.dim("Arguments"))
+        output.info(f"  {output.cyan('session')}    Session file (default: session.md)")
+        output.info(f"  {output.cyan('--dry-run')}  Preview without writing or executing")
+        output.info(f"  {output.cyan('--files')}    Apply only file blocks")
+        output.info(f"  {output.cyan('--commands')} Apply only command blocks")
+        output.info(f"  {output.cyan('--all')}      Apply both files and commands (default)")
+        output.blank()
+        output.info(output.dim("Examples"))
+        output.info("  $ ask apply")
+        output.info("  $ ask apply --dry-run")
+        output.info("  $ ask apply --files")
+        output.info("  $ ask apply session-2.md --commands")
+        output.blank()
     elif command == "cfg":
         output.blank()
         output.info(f"{output.bold('ask cfg')} {output.dim('—')} View or update configuration")
@@ -285,14 +420,17 @@ def cmd_help(args: argparse.Namespace) -> int:
         output.info(output.dim("Commands"))
         output.info(f"  {output.cyan('chat')}     Continue the conversation (default)")
         output.info(f"  {output.cyan('init')}     Initialize a new session file")
+        output.info(f"  {output.cyan('apply')}    Apply files and commands from AI response")
         output.info(f"  {output.cyan('cfg')}      View or update configuration")
         output.info(f"  {output.cyan('help')}     Show help information")
         output.blank()
         output.info(output.dim("Examples"))
         output.info(f"  {output.dim('$')} ask                     {output.dim('Continue conversation')}")
         output.info(f"  {output.dim('$')} ask init                {output.dim('Start new session')}")
+        output.info(f"  {output.dim('$')} ask apply               {output.dim('Apply AI response')}")
+        output.info(f"  {output.dim('$')} ask apply --dry-run     {output.dim('Preview apply')}")
         output.info(f"  {output.dim('$')} ask -m sonnet           {output.dim('Use specific model')}")
-        output.info(f"  {output.dim('$')} ask help cfg            {output.dim('Command help')}")
+        output.info(f"  {output.dim('$')} ask help apply          {output.dim('Command help')}")
         output.blank()
         output.info(f"Run {output.cyan('ask help <command>')} for details")
         output.blank()
@@ -310,40 +448,49 @@ def main() -> None:
 
     subparsers = parser.add_subparsers(dest="command")
 
-    # chat command (default)
+    # chat subcommand
     chat_parser = subparsers.add_parser("chat", help="Continue the conversation")
     chat_parser.add_argument("session", nargs="?", help="Session file (default: session.md)")
     chat_parser.add_argument("-m", "--model", help="Model to use (opus/sonnet/haiku)")
 
-    # init command
+    # init subcommand
     init_parser = subparsers.add_parser("init", help="Initialize a new session file")
     init_parser.add_argument("path", nargs="?", help="Path for session file")
 
-    # cfg command
+    # apply subcommand
+    apply_parser = subparsers.add_parser("apply", help="Apply files and commands from AI response")
+    apply_parser.add_argument("session", nargs="?", help="Session file (default: session.md)")
+    apply_parser.add_argument("--dry-run", action="store_true", help="Preview without applying")
+    apply_parser.add_argument("--files", action="store_true", help="Apply only file blocks")
+    apply_parser.add_argument("--commands", action="store_true", help="Apply only command blocks")
+    apply_parser.add_argument(
+        "--all", action="store_true", help="Apply both files and commands (default)"
+    )
+
+    # cfg subcommand
     cfg_parser = subparsers.add_parser("cfg", help="View or update configuration")
     cfg_parser.add_argument("action", nargs="?", help="Config field or 'reset'")
     cfg_parser.add_argument("value", nargs="?", help="Value to set")
 
-    # help command
+    # help subcommand
     help_parser = subparsers.add_parser("help", help="Show help")
     help_parser.add_argument("command", nargs="?", help="Command to get help for")
 
-    # Handle --help and -h
+    # Handle --help/-h
     if len(sys.argv) > 1 and sys.argv[1] in ("--help", "-h"):
         sys.argv[1] = "help"
 
-    # Default to chat if no command
+    # Default to chat if no command given or if first arg looks like an option/file
     args = sys.argv[1:]
-    if not args or args[0].startswith("-"):
-        args = ["chat"] + args
-    elif args[0] not in ("chat", "init", "cfg", "help"):
-        # Treat as session file
+    if not args or args[0].startswith("-") or args[0] not in ("chat", "init", "apply", "cfg", "help"):
         args = ["chat"] + args
 
     parsed = parser.parse_args(args)
 
     if parsed.command == "init":
         sys.exit(cmd_init(parsed))
+    elif parsed.command == "apply":
+        sys.exit(cmd_apply(parsed))
     elif parsed.command == "cfg":
         sys.exit(cmd_cfg(parsed))
     elif parsed.command == "help":

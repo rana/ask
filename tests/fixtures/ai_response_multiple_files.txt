@@ -1,0 +1,11 @@
+<!-- file: src/a.py -->
+```python
+a = 1
+```
+<!-- /file -->
+
+<!-- file: src/b.py -->
+```python
+b = 2
+```
+<!-- /file -->

@@ -38,7 +38,7 @@ def _get_boto3_client(service: str, region: str | None = None) -> Any:
     )
     
     # Firewall: Dynamic access bypasses static analysis of the symbol
-    client_factory: Any = getattr(boto3, "client")
+    client_factory: Any = getattr(boto3, "client")  # noqa: B009
     
     return client_factory(
         service,

@@ -1,0 +1,9 @@
+<!-- file: README.md -->
+````markdown
+# Title
+
+```python
+code example
+```
+````
+<!-- /file -->

@@ -1,0 +1,10 @@
+Here's the implementation:
+
+<!-- file: src/auth/login.py -->
+```python
+def login():
+    pass
+```
+<!-- /file -->
+
+That should work.
