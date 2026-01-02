@@ -137,9 +137,7 @@ def _write_file(block: FileBlock, workspace: Path | None, dry_run: bool) -> File
         return FileResult(path=block.path, action="FAILED", size=0, error=str(e))
 
 
-def _execute_command(
-    block: CommandBlock, workspace: Path | None, dry_run: bool
-) -> CommandResult:
+def _execute_command(block: CommandBlock, workspace: Path | None, dry_run: bool) -> CommandResult:
     """Execute a command block."""
     if dry_run:
         return CommandResult(command=block.command, status="OK")

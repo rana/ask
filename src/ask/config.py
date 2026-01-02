@@ -123,35 +123,43 @@ def _format_config_with_comments(config: Config) -> str:
     ]
 
     if config.max_tokens is not None:
-        lines.extend([
-            "",
-            "  // Maximum response tokens",
-            f'  "maxTokens": {config.max_tokens},',
-        ])
+        lines.extend(
+            [
+                "",
+                "  // Maximum response tokens",
+                f'  "maxTokens": {config.max_tokens},',
+            ]
+        )
 
     if config.region is not None:
-        lines.extend([
-            "",
-            "  // Preferred AWS region",
-            f'  "region": "{config.region}",',
-        ])
+        lines.extend(
+            [
+                "",
+                "  // Preferred AWS region",
+                f'  "region": "{config.region}",',
+            ]
+        )
 
     exclude = config.exclude if config.exclude is not None else Config.default_exclude()
-    lines.extend([
-        "",
-        "  // File patterns to exclude from expansion",
-        '  "exclude": [',
-    ])
+    lines.extend(
+        [
+            "",
+            "  // File patterns to exclude from expansion",
+            '  "exclude": [',
+        ]
+    )
 
     for i, pattern in enumerate(exclude):
         comma = "," if i < len(exclude) - 1 else ""
         lines.append(f'    "{pattern}"{comma}')
 
-    lines.extend([
-        "  ]",
-        "}",
-        "",
-    ])
+    lines.extend(
+        [
+            "  ]",
+            "}",
+            "",
+        ]
+    )
 
     return "\n".join(lines)
 

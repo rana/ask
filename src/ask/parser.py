@@ -58,11 +58,13 @@ def parse_turns(content: str) -> list[Turn]:
         # Strip leading/trailing whitespace but preserve internal structure
         turn_content = turn_content.strip()
 
-        turns.append(Turn(
-            number=turn_number,
-            role=role,  # type: ignore[arg-type]
-            content=turn_content,
-        ))
+        turns.append(
+            Turn(
+                number=turn_number,
+                role=role,  # type: ignore[arg-type]
+                content=turn_content,
+            )
+        )
 
     return turns
 

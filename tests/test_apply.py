@@ -60,9 +60,7 @@ def test_resolve_path_without_workspace() -> None:
     assert result == Path.cwd() / "src/main.py"
 
 
-def test_write_file_creates_directories(
-    make_session: Callable[..., Path], tmp_path: Path
-) -> None:
+def test_write_file_creates_directories(make_session: Callable[..., Path], tmp_path: Path) -> None:
     """Writing file creates parent directories."""
     target_file = tmp_path / "deep" / "nested" / "file.py"
     file_marker = f"<!-- file: {target_file} -->"
@@ -83,9 +81,7 @@ x = 1
     assert "x = 1" in target_file.read_text()
 
 
-def test_write_file_updates_existing(
-    make_session: Callable[..., Path], tmp_path: Path
-) -> None:
+def test_write_file_updates_existing(make_session: Callable[..., Path], tmp_path: Path) -> None:
     """Writing to existing file reports 'updated'."""
     existing = tmp_path / "existing.py"
     existing.write_text("old content")
@@ -126,9 +122,7 @@ def test_apply_no_blocks(make_session: Callable[..., Path]) -> None:
     assert "No files or commands" in str(exc_info.value)
 
 
-def test_dry_run_does_not_write(
-    make_session: Callable[..., Path], tmp_path: Path
-) -> None:
+def test_dry_run_does_not_write(make_session: Callable[..., Path], tmp_path: Path) -> None:
     """Dry run previews without writing."""
     target_file = tmp_path / "should_not_exist.py"
     file_marker = f"<!-- file: {target_file} -->"
@@ -251,9 +245,7 @@ def test_insert_applied_block_before_user_text(make_session: Callable[..., Path]
     assert block_pos < text_pos
 
 
-def test_apply_files_only_flag(
-    make_session: Callable[..., Path], tmp_path: Path
-) -> None:
+def test_apply_files_only_flag(make_session: Callable[..., Path], tmp_path: Path) -> None:
     """Apply with --files flag only extracts files."""
     target_file = tmp_path / "test.py"
     file_marker = f"<!-- file: {target_file} -->"
@@ -280,9 +272,7 @@ echo "should not run"
     assert target_file.exists()
 
 
-def test_apply_commands_only_flag(
-    make_session: Callable[..., Path], tmp_path: Path
-) -> None:
+def test_apply_commands_only_flag(make_session: Callable[..., Path], tmp_path: Path) -> None:
     """Apply with --commands flag only executes commands."""
     target_file = tmp_path / "should_not_exist.py"
     file_marker = f"<!-- file: {target_file} -->"

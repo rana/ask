@@ -26,9 +26,9 @@ TIMEOUT_SECONDS = 300  # 5 minutes
 def _get_boto3_client(service: str, region: str | None = None) -> Any:
     """
     Get a raw boto3 client.
-    
+
     We use getattr(boto3, "client") to bypass strict Pyright checks.
-    Directly accessing 'boto3.client' triggers "Partially Unknown" errors 
+    Directly accessing 'boto3.client' triggers "Partially Unknown" errors
     because the type definition contains a massive, complex Overload union.
     """
     config = BotoConfig(
@@ -36,10 +36,10 @@ def _get_boto3_client(service: str, region: str | None = None) -> Any:
         connect_timeout=30,
         retries={"max_attempts": 3, "mode": "adaptive"},
     )
-    
+
     # Firewall: Dynamic access bypasses static analysis of the symbol
     client_factory: Any = getattr(boto3, "client")  # noqa: B009
-    
+
     return client_factory(
         service,
         region_name=region or "us-west-2",
@@ -64,10 +64,8 @@ def find_profile(model_type: ModelType) -> InferenceProfile:
             kwargs["nextToken"] = next_token
 
         response = cast(dict[str, Any], client.list_inference_profiles(**kwargs))
-        
-        profiles = cast(
-            list[dict[str, Any]], response.get("inferenceProfileSummaries", [])
-        )
+
+        profiles = cast(list[dict[str, Any]], response.get("inferenceProfileSummaries", []))
         all_profiles.extend(profiles)
 
         next_token = cast(str | None, response.get("nextToken"))
@@ -97,12 +95,14 @@ def find_profile(model_type: ModelType) -> InferenceProfile:
             model_id = model_arn.split("/")[-1] if "/" in model_arn else model_arn
             version = _parse_model_version(model_id)
 
-            matches.append({
-                "arn": arn,
-                "model_id": model_id,
-                "version": version,
-                "region": arn_region,
-            })
+            matches.append(
+                {
+                    "arn": arn,
+                    "model_id": model_id,
+                    "version": version,
+                    "region": arn_region,
+                }
+            )
 
     if not matches:
         raise AskError(
@@ -117,10 +117,10 @@ def find_profile(model_type: ModelType) -> InferenceProfile:
         region_priority = 0 if m["region"] == preferred_region else 1
         v = cast(dict[str, Any], m["version"])
         return (
-            region_priority, 
-            -cast(int, v["major"]), 
-            -cast(int, v["minor"]), 
-            cast(str, v["date"])
+            region_priority,
+            -cast(int, v["major"]),
+            -cast(int, v["minor"]),
+            cast(str, v["date"]),
         )
 
     matches.sort(key=sort_key)

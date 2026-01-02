@@ -16,7 +16,26 @@ from ask.patterns import resolve_file_path, should_exclude
 from ask.types import Config
 
 # Zero-width space for escaping brackets
-ZWS = "\u200B"
+ZWS = "\u200b"
+
+
+def natural_sort_key(path: Path) -> tuple[float, str]:
+    """Sort key that orders numeric prefixes naturally.
+
+    Files sort by:
+    1. Leading numeric prefix (as integer, inf if none)
+    2. Full filename (as string, for tiebreaker)
+
+    Examples:
+        1-intro.md → (1, "1-intro.md")
+        10-end.md → (10, "10-end.md")
+        README.md → (inf, "README.md")
+    """
+    name = path.name
+    match = re.match(r"^(\d+)", name)
+    if match:
+        return (int(match.group(1)), name)
+    return (float("inf"), name)
 
 
 def expand_references(content: str, config: Config) -> tuple[str, int]:
@@ -116,6 +135,21 @@ def _parse_html(html: str) -> tuple[str | None, str]:
     return title if title else None, content.strip()
 
 
+def expand_file(path: str, config: Config) -> tuple[str, int]:
+    """Expand a single file reference (public API for refresh)."""
+    return _expand_file(path, config)
+
+
+def expand_directory(path: str, recursive: bool, config: Config) -> tuple[str, int]:
+    """Expand a directory reference (public API for refresh)."""
+    return _expand_directory(path, recursive, config)
+
+
+def expand_url(url: str, config: Config) -> tuple[str, int]:
+    """Expand a URL reference (public API for refresh)."""
+    return _expand_url(url, config)
+
+
 def _expand_file(path: str, config: Config) -> tuple[str, int]:
     """Expand a single file reference."""
     resolved_path = resolve_file_path(path)
@@ -170,8 +204,11 @@ def _expand_directory(path: str, recursive: bool, config: Config) -> tuple[str, 
                 has_subdirs = True
                 break
 
-    # Collect files
-    file_paths = sorted(dir_path.rglob("*")) if recursive else sorted(dir_path.glob("*"))
+    # Collect files with natural sort
+    if recursive:
+        file_paths = sorted(dir_path.rglob("*"), key=natural_sort_key)
+    else:
+        file_paths = sorted(dir_path.glob("*"), key=natural_sort_key)
 
     for file_path in file_paths:
         if not file_path.is_file():

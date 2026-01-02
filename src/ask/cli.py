@@ -13,6 +13,7 @@ from ask.check import check_session
 from ask.config import ensure_config, get_config_path, load_config, save_config, update_config
 from ask.errors import AskError, ConfigError
 from ask.output import output
+from ask.refresh import print_refresh_result, refresh_session
 from ask.session import (
     SessionWriter,
     expand_and_save_session,
@@ -91,18 +92,20 @@ def cmd_chat(args: argparse.Namespace) -> int:
         profile = find_profile(model_type)
         region = extract_region(profile)
 
-        output.meta([
-            ("Model", f"{output.model_name(profile.model_id)} {output.dim(f'({region})')}")
-        ])
+        output.meta(
+            [("Model", f"{output.model_name(profile.model_id)} {output.dim(f'({region})')}")]
+        )
 
         messages = turns_to_messages(session.turns)
         input_tokens = estimate_tokens(messages)
         turn_label = "turn" if len(session.turns) == 1 else "turns"
 
-        output.meta([
-            ("Input", f"{output.number(input_tokens)} tokens"),
-            ("Turns", f"{len(session.turns)} {turn_label}"),
-        ])
+        output.meta(
+            [
+                ("Input", f"{output.number(input_tokens)} tokens"),
+                ("Turns", f"{len(session.turns)} {turn_label}"),
+            ]
+        )
 
         if input_tokens > 150000:
             output.blank()
@@ -349,6 +352,56 @@ def cmd_check(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_refresh(args: argparse.Namespace) -> int:
+    """Refresh expanded references in session."""
+    session_path = args.session or "session.md"
+
+    if not Path(session_path).exists():
+        if session_path == "session.md":
+            output.error("No session.md found")
+            output.info("Run 'ask init' to create session.md")
+        else:
+            output.error(f"File not found: {session_path}")
+        return 1
+
+    try:
+        include_urls = args.url
+        dry_run = args.dry_run
+
+        if dry_run:
+            output.info(output.dim("Dry run - no changes will be made"))
+            output.blank()
+
+        result = refresh_session(
+            session_path,
+            include_urls=include_urls,
+            dry_run=dry_run,
+        )
+
+        print_refresh_result(result, dry_run=dry_run)
+
+        if not dry_run and (
+            result.files_refreshed > 0 or result.dirs_refreshed > 0 or result.urls_refreshed > 0
+        ):
+            output.info(output.dim(f"Updated {session_path}"))
+
+        return 0
+
+    except AskError as e:
+        output.error(e.message)
+        if e.help_text:
+            output.blank()
+            output.info(e.help_text)
+        return 1
+    except Exception as e:
+        ask_error = AskError.from_exception(e)
+        output.error(ask_error.message)
+        if ask_error.help_text:
+            output.blank()
+            output.info(ask_error.help_text)
+        return 1
+
+
 def cmd_cfg(args: argparse.Namespace) -> int:
     """View or update configuration."""
     action = args.action
@@ -451,10 +504,7 @@ def cmd_help(args: argparse.Namespace) -> int:
         output.blank()
     elif command == "check":
         output.blank()
-        output.info(
-            f"{output.bold('ask check')} {output.dim('—')} "
-            "Run verification checks"
-        )
+        output.info(f"{output.bold('ask check')} {output.dim('—')} Run verification checks")
         output.blank()
         output.info(output.dim("Usage"))
         output.info("  ask check [session] [--fix]")
@@ -467,6 +517,27 @@ def cmd_help(args: argparse.Namespace) -> int:
         output.info("  $ ask check")
         output.info("  $ ask check --fix")
         output.info("  $ ask check session-2.md")
+        output.blank()
+    elif command == "refresh":
+        output.blank()
+        output.info(
+            f"{output.bold('ask refresh')} {output.dim('—')} "
+            "Re-expand all marked references in place"
+        )
+        output.blank()
+        output.info(output.dim("Usage"))
+        output.info("  ask refresh [session] [--url] [--dry-run]")
+        output.blank()
+        output.info(output.dim("Arguments"))
+        output.info(f"  {output.cyan('session')}    Session file (default: session.md)")
+        output.info(f"  {output.cyan('--url')}      Also refresh URL blocks (default: skip)")
+        output.info(f"  {output.cyan('--dry-run')}  Preview without modifying file")
+        output.blank()
+        output.info(output.dim("Examples"))
+        output.info("  $ ask refresh")
+        output.info("  $ ask refresh --dry-run")
+        output.info("  $ ask refresh --url")
+        output.info("  $ ask refresh session-2.md")
         output.blank()
     elif command == "cfg":
         output.blank()
@@ -502,16 +573,28 @@ def cmd_help(args: argparse.Namespace) -> int:
         output.info(f"  {output.cyan('init')}     Initialize a new session file")
         output.info(f"  {output.cyan('apply')}    Apply files and commands from AI response")
         output.info(f"  {output.cyan('check')}    Run verification checks")
+        output.info(f"  {output.cyan('refresh')}  Re-expand marked references in place")
         output.info(f"  {output.cyan('cfg')}      View or update configuration")
         output.info(f"  {output.cyan('help')}     Show help information")
         output.blank()
         output.info(output.dim("Examples"))
-        output.info(f"  {output.dim('$')} ask                     {output.dim('Continue conversation')}")
-        output.info(f"  {output.dim('$')} ask init                {output.dim('Start new session')}")
-        output.info(f"  {output.dim('$')} ask apply               {output.dim('Apply AI response')}")
+        output.info(
+            f"  {output.dim('$')} ask                     {output.dim('Continue conversation')}"
+        )
+        output.info(
+            f"  {output.dim('$')} ask init                {output.dim('Start new session')}"
+        )
+        output.info(
+            f"  {output.dim('$')} ask apply               {output.dim('Apply AI response')}"
+        )
         output.info(f"  {output.dim('$')} ask check               {output.dim('Run checks')}")
         output.info(f"  {output.dim('$')} ask check --fix         {output.dim('Fix then check')}")
-        output.info(f"  {output.dim('$')} ask -m sonnet           {output.dim('Use specific model')}")
+        output.info(
+            f"  {output.dim('$')} ask refresh             {output.dim('Update expanded refs')}"
+        )
+        output.info(
+            f"  {output.dim('$')} ask -m sonnet           {output.dim('Use specific model')}"
+        )
         output.info(f"  {output.dim('$')} ask help check          {output.dim('Command help')}")
         output.blank()
         output.info(f"Run {output.cyan('ask help <command>')} for details")
@@ -550,6 +633,11 @@ def main() -> None:
     check_parser.add_argument("session", nargs="?", help="Session file (default: session.md)")
     check_parser.add_argument("--fix", action="store_true", help="Run auto-fix commands first")
 
+    refresh_parser = subparsers.add_parser("refresh", help="Re-expand marked references")
+    refresh_parser.add_argument("session", nargs="?", help="Session file (default: session.md)")
+    refresh_parser.add_argument("--url", action="store_true", help="Also refresh URL blocks")
+    refresh_parser.add_argument("--dry-run", action="store_true", help="Preview without modifying")
+
     cfg_parser = subparsers.add_parser("cfg", help="View or update configuration")
     cfg_parser.add_argument("action", nargs="?", help="Config field or 'reset'")
     cfg_parser.add_argument("value", nargs="?", help="Value to set")
@@ -561,8 +649,10 @@ def main() -> None:
         sys.argv[1] = "help"
 
     args = sys.argv[1:]
-    if not args or args[0].startswith("-") or args[0] not in (
-        "chat", "init", "apply", "check", "cfg", "help"
+    if (
+        not args
+        or args[0].startswith("-")
+        or args[0] not in ("chat", "init", "apply", "check", "refresh", "cfg", "help")
     ):
         args = ["chat"] + args
 
@@ -574,6 +664,8 @@ def main() -> None:
         sys.exit(cmd_apply(parsed))
     elif parsed.command == "check":
         sys.exit(cmd_check(parsed))
+    elif parsed.command == "refresh":
+        sys.exit(cmd_refresh(parsed))
     elif parsed.command == "cfg":
         sys.exit(cmd_cfg(parsed))
     elif parsed.command == "help":
