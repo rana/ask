@@ -161,7 +161,7 @@ class SessionWriter:
         self.next_turn_number = next_turn_number
         self.buffer: list[str] = []
         self._started = False
-        self._file_handle: TextIO = open(self.path, "a", encoding="utf-8")
+        self._file_handle: TextIO = self.path.open("a", encoding="utf-8")  # noqa: SIM115
 
     def write(self, text: str) -> None:
         """Write a chunk of AI response."""
