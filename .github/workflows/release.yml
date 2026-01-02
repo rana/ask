@@ -35,7 +35,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.14'
+          python-version: '3.12'
       
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -71,7 +71,7 @@ jobs:
         shell: bash
         run: |
           ./dist/${{ matrix.target }}/${{ matrix.binary }} --version
-          ./dist/${{ matrix.target }}/${{ matrix.binary }} help
+          ./dist/${{ matrix.target }}/${{ matrix.binary }} --help
       
       - name: Upload artifact
         uses: actions/upload-artifact@v4
