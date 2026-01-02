@@ -1,0 +1,141 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-amd64
+            binary: ask
+          - os: ubuntu-24.04-arm64
+            target: linux-arm64
+            binary: ask
+          - os: macos-latest
+            target: darwin-arm64
+            binary: ask
+          - os: windows-latest
+            target: windows-amd64
+            binary: ask.exe
+    
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+      
+      - name: Install dependencies
+        run: |
+          uv sync --all-extras
+          uv pip install pyinstaller
+      
+      - name: Get version info
+        id: version
+        shell: bash
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date +%Y-%m-%d)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
+          echo "date=$DATE" >> $GITHUB_OUTPUT
+      
+      - name: Inject version info
+        shell: bash
+        run: |
+          sed -i.bak "s/__GIT_COMMIT__/${{ steps.version.outputs.commit }}/g" src/ask/version.py
+          sed -i.bak "s/__BUILD_DATE__/${{ steps.version.outputs.date }}/g" src/ask/version.py
+          cat src/ask/version.py
+      
+      - name: Build with PyInstaller
+        run: |
+          uv run pyinstaller --onefile --name ask --distpath dist/${{ matrix.target }} src/ask/cli.py
+      
+      - name: Test binary
+        shell: bash
+        run: |
+          ./dist/${{ matrix.target }}/${{ matrix.binary }} --version
+          ./dist/${{ matrix.target }}/${{ matrix.binary }} help
+      
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ask-${{ matrix.target }}
+          path: dist/${{ matrix.target }}/${{ matrix.binary }}
+          retention-days: 1
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      
+      - name: Get version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      
+      - name: Create archives
+        run: |
+          mkdir -p release
+          
+          # Linux amd64
+          cd artifacts/ask-linux-amd64
+          chmod +x ask
+          tar -cJf ../../release/ask-${{ steps.version.outputs.version }}-linux-amd64.tar.xz ask
+          cd ../..
+          
+          # Linux arm64
+          cd artifacts/ask-linux-arm64
+          chmod +x ask
+          tar -cJf ../../release/ask-${{ steps.version.outputs.version }}-linux-arm64.tar.xz ask
+          cd ../..
+          
+          # Darwin arm64
+          cd artifacts/ask-darwin-arm64
+          chmod +x ask
+          tar -cJf ../../release/ask-${{ steps.version.outputs.version }}-darwin-arm64.tar.xz ask
+          cd ../..
+          
+          # Windows amd64
+          cd artifacts/ask-windows-amd64
+          zip ../../release/ask-${{ steps.version.outputs.version }}-windows-amd64.zip ask.exe
+          cd ../..
+      
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum * > checksums.txt
+          cat checksums.txt
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.tar.xz
+            release/*.zip
+            release/checksums.txt
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref, '-') }}

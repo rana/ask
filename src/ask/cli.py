@@ -1,11 +1,12 @@
-"""CLI entry point for ask."""
+"""CLI entry point for ask using Typer."""
 
 from __future__ import annotations
 
-import argparse
 import signal
-import sys
 from pathlib import Path
+from typing import Annotated
+
+import typer
 
 from ask.apply import apply_session, format_applied_block, insert_applied_block
 from ask.bedrock import extract_region, find_profile, stream_completion
@@ -22,72 +23,77 @@ from ask.session import (
     validate_session,
 )
 from ask.tokens import estimate_tokens
-from ask.types import Config, StreamChunk, StreamEnd
+from ask.types import Config, ModelType, StreamChunk, StreamEnd
+from ask.version import get_version_string
 from ask.workspace import find_workspace
 
-
-def cmd_init(args: argparse.Namespace) -> int:
-    """Initialize a new session file."""
-    path = args.path or "session.md"
-
-    if path.endswith("/") or path.endswith("\\"):
-        path = f"{path}session.md"
-
-    file_path = Path(path)
-
-    if file_path.exists() and file_path.is_dir():
-        file_path = file_path / "session.md"
-
-    if file_path.exists():
-        output.error(f"{file_path} already exists")
-        output.info("Delete it to start fresh")
-        return 1
-
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-
-    content = "# [1] Human\n\n_\n"
-    file_path.write_text(content, encoding="utf-8")
-
-    output.success(f"Created {file_path}")
-
-    try:
-        ensure_config()
-    except Exception as e:
-        output.warning(f"Could not create config file: {e}")
-
-    output.blank()
-    output.info("Next steps:")
-    output.info(f"1. Add your question to {file_path}")
-    cmd_suffix = "" if str(file_path) == "session.md" else f" {file_path}"
-    output.info(f"2. Run: ask{cmd_suffix}")
-
-    return 0
+app = typer.Typer(
+    name="ask",
+    help="AI conversations through Markdown files",
+    add_completion=False,
+    no_args_is_help=False,
+)
 
 
-def cmd_chat(args: argparse.Namespace) -> int:
-    """Continue the conversation."""
-    session_path = args.session or "session.md"
+def version_callback(value: bool) -> None:
+    """Show version and exit."""
+    if value:
+        output.info(get_version_string())
+        raise typer.Exit()
 
-    if not Path(session_path).exists():
-        if session_path == "session.md":
+
+@app.callback(invoke_without_command=True)
+def main_callback(
+    ctx: typer.Context,
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            "-V",
+            callback=version_callback,
+            is_eager=True,
+            help="Show version and exit",
+        ),
+    ] = False,
+) -> None:
+    """ask — AI conversations through Markdown files."""
+    # If no command provided, default to chat
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(chat)
+
+
+@app.command()
+def chat(
+    session: Annotated[
+        Path,
+        typer.Argument(help="Session file"),
+    ] = Path("session.md"),
+    model: Annotated[
+        ModelType | None,
+        typer.Option("-m", "--model", help="Model to use (opus/sonnet/haiku)"),
+    ] = None,
+) -> None:
+    """Continue the conversation with AI."""
+    if not session.exists():
+        if session.name == "session.md":
             output.error("No session.md found")
             output.info("Run 'ask init' to create session.md")
         else:
-            output.error(f"File not found: {session_path}")
-        return 1
+            output.error(f"File not found: {session}")
+        raise typer.Exit(1)
 
     try:
         config = load_config()
-        model_type = args.model or config.model
+        model_type = model or config.model
 
-        session = read_session(session_path)
+        sess = read_session(str(session))
 
-        expanded, file_count = expand_and_save_session(session_path, session)
+        expanded, file_count = expand_and_save_session(str(session), sess)
         if expanded:
             output.success(f"Expanded {file_count} file{'s' if file_count != 1 else ''}")
-            session = read_session(session_path)
+            sess = read_session(str(session))
 
-        validate_session(session)
+        validate_session(sess)
 
         profile = find_profile(model_type)
         region = extract_region(profile)
@@ -96,14 +102,14 @@ def cmd_chat(args: argparse.Namespace) -> int:
             [("Model", f"{output.model_name(profile.model_id)} {output.dim(f'({region})')}")]
         )
 
-        messages = turns_to_messages(session.turns)
+        messages = turns_to_messages(sess.turns)
         input_tokens = estimate_tokens(messages)
-        turn_label = "turn" if len(session.turns) == 1 else "turns"
+        turn_label = "turn" if len(sess.turns) == 1 else "turns"
 
         output.meta(
             [
                 ("Input", f"{output.number(input_tokens)} tokens"),
-                ("Turns", f"{len(session.turns)} {turn_label}"),
+                ("Turns", f"{len(sess.turns)} {turn_label}"),
             ]
         )
 
@@ -111,8 +117,8 @@ def cmd_chat(args: argparse.Namespace) -> int:
             output.blank()
             output.warning("Large input may be slow or hit limits")
 
-        next_turn_number = session.turns[-1].number + 1
-        writer = SessionWriter(session_path, next_turn_number)
+        next_turn_number = sess.turns[-1].number + 1
+        writer = SessionWriter(str(session), next_turn_number)
 
         final_tokens = 0
         interrupted = False
@@ -157,47 +163,99 @@ def cmd_chat(args: argparse.Namespace) -> int:
                 f"Done {output.dim('·')} {output.cyan(output.number(final_tokens))} tokens"
             )
 
-        return 0
-
     except AskError as e:
         output.error(e.message)
         if e.help_text:
             output.blank()
             output.info(e.help_text)
-        return 1
+        raise typer.Exit(1) from None
     except Exception as e:
         ask_error = AskError.from_exception(e)
         output.error(ask_error.message)
         if ask_error.help_text:
             output.blank()
             output.info(ask_error.help_text)
-        return 1
+        raise typer.Exit(1) from None
 
 
-def cmd_apply(args: argparse.Namespace) -> int:
+@app.command()
+def init(
+    path: Annotated[
+        Path,
+        typer.Argument(help="Path for session file"),
+    ] = Path("session.md"),
+) -> None:
+    """Initialize a new session file."""
+    file_path = path
+
+    if str(path).endswith("/") or str(path).endswith("\\"):
+        file_path = path / "session.md"
+
+    if file_path.exists() and file_path.is_dir():
+        file_path = file_path / "session.md"
+
+    if file_path.exists():
+        output.error(f"{file_path} already exists")
+        output.info("Delete it to start fresh")
+        raise typer.Exit(1)
+
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    content = "# [1] Human\n\n_\n"
+    file_path.write_text(content, encoding="utf-8")
+
+    output.success(f"Created {file_path}")
+
+    try:
+        ensure_config()
+    except Exception as e:
+        output.warning(f"Could not create config file: {e}")
+
+    output.blank()
+    output.info("Next steps:")
+    output.info(f"1. Add your question to {file_path}")
+    cmd_suffix = "" if str(file_path) == "session.md" else f" {file_path}"
+    output.info(f"2. Run: ask{cmd_suffix}")
+
+
+@app.command(name="apply")
+def apply_cmd(
+    session: Annotated[
+        Path,
+        typer.Argument(help="Session file"),
+    ] = Path("session.md"),
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Preview without writing or executing"),
+    ] = False,
+    files: Annotated[
+        bool,
+        typer.Option("--files", help="Apply only file blocks"),
+    ] = False,
+    commands: Annotated[
+        bool,
+        typer.Option("--commands", help="Apply only command blocks"),
+    ] = False,
+) -> None:
     """Apply files and commands from AI response."""
-    session_path = args.session or "session.md"
-
-    if not Path(session_path).exists():
-        if session_path == "session.md":
+    if not session.exists():
+        if session.name == "session.md":
             output.error("No session.md found")
             output.info("Run 'ask init' to create session.md")
         else:
-            output.error(f"File not found: {session_path}")
-        return 1
+            output.error(f"File not found: {session}")
+        raise typer.Exit(1)
 
     try:
         apply_files = True
         apply_commands = True
 
-        if args.files:
+        if files:
             apply_commands = False
-        elif args.commands:
+        elif commands:
             apply_files = False
 
-        dry_run = args.dry_run
-
-        session_content = Path(session_path).read_text(encoding="utf-8")
+        session_content = session.read_text(encoding="utf-8")
         workspace = find_workspace(session_content)
 
         if dry_run:
@@ -208,7 +266,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
             output.meta([("Workspace", str(workspace))])
 
         result = apply_session(
-            session_path,
+            str(session),
             dry_run=dry_run,
             apply_files=apply_files,
             apply_commands=apply_commands,
@@ -258,48 +316,57 @@ def cmd_apply(args: argparse.Namespace) -> int:
                 output.success(f"Applied {', '.join(parts)}")
 
                 applied_block = format_applied_block(result)
-                insert_applied_block(session_path, applied_block)
-                output.info(output.dim(f"Updated {session_path}"))
+                insert_applied_block(str(session), applied_block)
+                output.info(output.dim(f"Updated {session}"))
             else:
                 output.warning("Apply completed with errors")
 
                 applied_block = format_applied_block(result)
-                insert_applied_block(session_path, applied_block)
-                output.info(output.dim(f"Updated {session_path}"))
+                insert_applied_block(str(session), applied_block)
+                output.info(output.dim(f"Updated {session}"))
 
-        return 0 if result.status == "OK" else 1
+        if result.status != "OK":
+            raise typer.Exit(1)
 
     except AskError as e:
         output.error(e.message)
         if e.help_text:
             output.blank()
             output.info(e.help_text)
-        return 1
+        raise typer.Exit(1) from None
     except Exception as e:
+        if isinstance(e, SystemExit):
+            raise
         ask_error = AskError.from_exception(e)
         output.error(ask_error.message)
         if ask_error.help_text:
             output.blank()
             output.info(ask_error.help_text)
-        return 1
+        raise typer.Exit(1) from None
 
 
-def cmd_check(args: argparse.Namespace) -> int:
-    """Run verification checks."""
-    session_path = args.session or "session.md"
-
-    if not Path(session_path).exists():
-        if session_path == "session.md":
+@app.command(name="check")
+def check_cmd(
+    session: Annotated[
+        Path,
+        typer.Argument(help="Session file"),
+    ] = Path("session.md"),
+    fix: Annotated[
+        bool,
+        typer.Option("--fix", help="Run auto-fix commands before checking"),
+    ] = False,
+) -> None:
+    """Run verification checks (lint, type check, tests)."""
+    if not session.exists():
+        if session.name == "session.md":
             output.error("No session.md found")
             output.info("Run 'ask init' to create session.md")
         else:
-            output.error(f"File not found: {session_path}")
-        return 1
+            output.error(f"File not found: {session}")
+        raise typer.Exit(1)
 
     try:
-        fix = args.fix
-
-        session_content = Path(session_path).read_text(encoding="utf-8")
+        session_content = session.read_text(encoding="utf-8")
         workspace = find_workspace(session_content)
 
         if workspace:
@@ -311,7 +378,7 @@ def cmd_check(args: argparse.Namespace) -> int:
         output.blank()
         output.info(output.dim("Running checks..."))
 
-        result = check_session(session_path, fix=fix)
+        result = check_session(str(session), fix=fix)
 
         output.blank()
         for r in result.results:
@@ -333,48 +400,60 @@ def cmd_check(args: argparse.Namespace) -> int:
             fail_count = sum(1 for r in result.results if r.status != "PASS")
             output.error(f"{fail_count} check{'s' if fail_count != 1 else ''} failed")
 
-        output.info(output.dim(f"Updated {session_path}"))
+        output.info(output.dim(f"Updated {session}"))
 
-        return 0 if result.status == "PASS" else 1
+        if result.status != "PASS":
+            raise typer.Exit(1)
 
     except AskError as e:
         output.error(e.message)
         if e.help_text:
             output.blank()
             output.info(e.help_text)
-        return 1
+        raise typer.Exit(1) from None
     except Exception as e:
+        if isinstance(e, SystemExit):
+            raise
         ask_error = AskError.from_exception(e)
         output.error(ask_error.message)
         if ask_error.help_text:
             output.blank()
             output.info(ask_error.help_text)
-        return 1
+        raise typer.Exit(1) from None
 
 
-def cmd_refresh(args: argparse.Namespace) -> int:
-    """Refresh expanded references in session."""
-    session_path = args.session or "session.md"
-
-    if not Path(session_path).exists():
-        if session_path == "session.md":
+@app.command()
+def refresh(
+    session: Annotated[
+        Path,
+        typer.Argument(help="Session file"),
+    ] = Path("session.md"),
+    url: Annotated[
+        bool,
+        typer.Option("--url", help="Also refresh URL blocks (default: skip)"),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Preview without modifying file"),
+    ] = False,
+) -> None:
+    """Re-expand all marked references in place."""
+    if not session.exists():
+        if session.name == "session.md":
             output.error("No session.md found")
             output.info("Run 'ask init' to create session.md")
         else:
-            output.error(f"File not found: {session_path}")
-        return 1
+            output.error(f"File not found: {session}")
+        raise typer.Exit(1)
 
     try:
-        include_urls = args.url
-        dry_run = args.dry_run
-
         if dry_run:
             output.info(output.dim("Dry run - no changes will be made"))
             output.blank()
 
         result = refresh_session(
-            session_path,
-            include_urls=include_urls,
+            str(session),
+            include_urls=url,
             dry_run=dry_run,
         )
 
@@ -383,32 +462,39 @@ def cmd_refresh(args: argparse.Namespace) -> int:
         if not dry_run and (
             result.files_refreshed > 0 or result.dirs_refreshed > 0 or result.urls_refreshed > 0
         ):
-            output.info(output.dim(f"Updated {session_path}"))
-
-        return 0
+            output.info(output.dim(f"Updated {session}"))
 
     except AskError as e:
         output.error(e.message)
         if e.help_text:
             output.blank()
             output.info(e.help_text)
-        return 1
+        raise typer.Exit(1) from None
     except Exception as e:
+        if isinstance(e, SystemExit):
+            raise
         ask_error = AskError.from_exception(e)
         output.error(ask_error.message)
         if ask_error.help_text:
             output.blank()
             output.info(ask_error.help_text)
-        return 1
+        raise typer.Exit(1) from None
 
 
-def cmd_cfg(args: argparse.Namespace) -> int:
+@app.command()
+def cfg(
+    field: Annotated[
+        str | None,
+        typer.Argument(help="Config field or 'reset'"),
+    ] = None,
+    value: Annotated[
+        str | None,
+        typer.Argument(help="Value to set"),
+    ] = None,
+) -> None:
     """View or update configuration."""
-    action = args.action
-    value = args.value
-
     try:
-        if not action:
+        if not field:
             ensure_config()
             config = load_config()
             config_path = get_config_path()
@@ -434,244 +520,42 @@ def cmd_cfg(args: argparse.Namespace) -> int:
             exclude = config.exclude or Config.default_exclude()
             output.field("exclude", f"{len(exclude)} patterns")
 
-            return 0
+            return
 
-        if action == "reset":
+        if field == "reset":
             save_config(Config())
             output.success("Reset to defaults")
-            return 0
+            return
 
         if not value:
-            output.error(f"Missing value for '{action}'")
-            output.info(f"Usage: ask cfg {action} <value>")
-            return 1
+            output.error(f"Missing value for '{field}'")
+            output.info(f"Usage: ask cfg {field} <value>")
+            raise typer.Exit(1)
 
-        update_config(action, value)
-        output.success(f"{action} set to {value}")
-        return 0
+        update_config(field, value)
+        output.success(f"{field} set to {value}")
 
     except ConfigError as e:
         output.error(e.message)
         if e.help_text:
             output.info(e.help_text)
-        return 1
+        raise typer.Exit(1) from None
     except Exception as e:
+        if isinstance(e, SystemExit):
+            raise
         output.error(str(e))
-        return 1
+        raise typer.Exit(1) from None
 
 
-def cmd_help(args: argparse.Namespace) -> int:
-    """Show help information."""
-    command = args.command
-
-    if command == "init":
-        output.blank()
-        output.info(f"{output.bold('ask init')} {output.dim('—')} Initialize a new session file")
-        output.blank()
-        output.info(output.dim("Usage"))
-        output.info("  ask init [path]")
-        output.blank()
-        output.info(output.dim("Arguments"))
-        output.info(f"  {output.cyan('path')}  Path for session file (default: session.md)")
-        output.blank()
-        output.info(output.dim("Examples"))
-        output.info("  $ ask init")
-        output.info("  $ ask init session-2.md")
-        output.info("  $ ask init notes/research.md")
-        output.blank()
-    elif command == "apply":
-        output.blank()
-        output.info(
-            f"{output.bold('ask apply')} {output.dim('—')} "
-            "Apply files and commands from AI response"
-        )
-        output.blank()
-        output.info(output.dim("Usage"))
-        output.info("  ask apply [session] [--dry-run] [--files|--commands|--all]")
-        output.blank()
-        output.info(output.dim("Arguments"))
-        output.info(f"  {output.cyan('session')}    Session file (default: session.md)")
-        output.info(f"  {output.cyan('--dry-run')}  Preview without writing or executing")
-        output.info(f"  {output.cyan('--files')}    Apply only file blocks")
-        output.info(f"  {output.cyan('--commands')} Apply only command blocks")
-        output.info(f"  {output.cyan('--all')}      Apply both files and commands (default)")
-        output.blank()
-        output.info(output.dim("Examples"))
-        output.info("  $ ask apply")
-        output.info("  $ ask apply --dry-run")
-        output.info("  $ ask apply --files")
-        output.info("  $ ask apply session-2.md --commands")
-        output.blank()
-    elif command == "check":
-        output.blank()
-        output.info(f"{output.bold('ask check')} {output.dim('—')} Run verification checks")
-        output.blank()
-        output.info(output.dim("Usage"))
-        output.info("  ask check [session] [--fix]")
-        output.blank()
-        output.info(output.dim("Arguments"))
-        output.info(f"  {output.cyan('session')}  Session file (default: session.md)")
-        output.info(f"  {output.cyan('--fix')}    Run auto-fix commands before checking")
-        output.blank()
-        output.info(output.dim("Examples"))
-        output.info("  $ ask check")
-        output.info("  $ ask check --fix")
-        output.info("  $ ask check session-2.md")
-        output.blank()
-    elif command == "refresh":
-        output.blank()
-        output.info(
-            f"{output.bold('ask refresh')} {output.dim('—')} "
-            "Re-expand all marked references in place"
-        )
-        output.blank()
-        output.info(output.dim("Usage"))
-        output.info("  ask refresh [session] [--url] [--dry-run]")
-        output.blank()
-        output.info(output.dim("Arguments"))
-        output.info(f"  {output.cyan('session')}    Session file (default: session.md)")
-        output.info(f"  {output.cyan('--url')}      Also refresh URL blocks (default: skip)")
-        output.info(f"  {output.cyan('--dry-run')}  Preview without modifying file")
-        output.blank()
-        output.info(output.dim("Examples"))
-        output.info("  $ ask refresh")
-        output.info("  $ ask refresh --dry-run")
-        output.info("  $ ask refresh --url")
-        output.info("  $ ask refresh session-2.md")
-        output.blank()
-    elif command == "cfg":
-        output.blank()
-        output.info(f"{output.bold('ask cfg')} {output.dim('—')} View or update configuration")
-        output.blank()
-        output.info(output.dim("Usage"))
-        output.info("  ask cfg [field] [value]")
-        output.blank()
-        output.info(output.dim("Config Fields"))
-        output.info(f"  {output.cyan('model')}        AI model (opus/sonnet/haiku)")
-        output.info(f"  {output.cyan('temperature')}  Response creativity (0.0-1.0)")
-        output.info(f"  {output.cyan('tokens')}       Max output tokens (1-200000)")
-        output.info(f"  {output.cyan('region')}       Preferred AWS region")
-        output.info(f"  {output.cyan('filter')}       Strip comments from files (on/off)")
-        output.info(f"  {output.cyan('web')}          Fetch URL references (on/off)")
-        output.info(f"  {output.cyan('reset')}        Reset all settings to defaults")
-        output.blank()
-        output.info(output.dim("Examples"))
-        output.info("  $ ask cfg")
-        output.info("  $ ask cfg model sonnet")
-        output.info("  $ ask cfg temperature 0.7")
-        output.info("  $ ask cfg reset")
-        output.blank()
-    else:
-        output.blank()
-        output.info(f"{output.bold('ask')} {output.dim('—')} AI conversations through Markdown")
-        output.blank()
-        output.info(output.dim("Usage"))
-        output.info(f"  ask {output.cyan('[command]')} {output.dim('[options]')}")
-        output.blank()
-        output.info(output.dim("Commands"))
-        output.info(f"  {output.cyan('chat')}     Continue the conversation (default)")
-        output.info(f"  {output.cyan('init')}     Initialize a new session file")
-        output.info(f"  {output.cyan('apply')}    Apply files and commands from AI response")
-        output.info(f"  {output.cyan('check')}    Run verification checks")
-        output.info(f"  {output.cyan('refresh')}  Re-expand marked references in place")
-        output.info(f"  {output.cyan('cfg')}      View or update configuration")
-        output.info(f"  {output.cyan('help')}     Show help information")
-        output.blank()
-        output.info(output.dim("Examples"))
-        output.info(
-            f"  {output.dim('$')} ask                     {output.dim('Continue conversation')}"
-        )
-        output.info(
-            f"  {output.dim('$')} ask init                {output.dim('Start new session')}"
-        )
-        output.info(
-            f"  {output.dim('$')} ask apply               {output.dim('Apply AI response')}"
-        )
-        output.info(f"  {output.dim('$')} ask check               {output.dim('Run checks')}")
-        output.info(f"  {output.dim('$')} ask check --fix         {output.dim('Fix then check')}")
-        output.info(
-            f"  {output.dim('$')} ask refresh             {output.dim('Update expanded refs')}"
-        )
-        output.info(
-            f"  {output.dim('$')} ask -m sonnet           {output.dim('Use specific model')}"
-        )
-        output.info(f"  {output.dim('$')} ask help check          {output.dim('Command help')}")
-        output.blank()
-        output.info(f"Run {output.cyan('ask help <command>')} for details")
-        output.blank()
-
-    return 0
+@app.command()
+def version() -> None:
+    """Show version information."""
+    output.info(get_version_string())
 
 
 def main() -> None:
-    """Main entry point."""
-    parser = argparse.ArgumentParser(
-        prog="ask",
-        description="AI conversations through Markdown files",
-        add_help=False,
-    )
-
-    subparsers = parser.add_subparsers(dest="command")
-
-    chat_parser = subparsers.add_parser("chat", help="Continue the conversation")
-    chat_parser.add_argument("session", nargs="?", help="Session file (default: session.md)")
-    chat_parser.add_argument("-m", "--model", help="Model to use (opus/sonnet/haiku)")
-
-    init_parser = subparsers.add_parser("init", help="Initialize a new session file")
-    init_parser.add_argument("path", nargs="?", help="Path for session file")
-
-    apply_parser = subparsers.add_parser("apply", help="Apply files and commands from AI response")
-    apply_parser.add_argument("session", nargs="?", help="Session file (default: session.md)")
-    apply_parser.add_argument("--dry-run", action="store_true", help="Preview without applying")
-    apply_parser.add_argument("--files", action="store_true", help="Apply only file blocks")
-    apply_parser.add_argument("--commands", action="store_true", help="Apply only command blocks")
-    apply_parser.add_argument(
-        "--all", action="store_true", help="Apply both files and commands (default)"
-    )
-
-    check_parser = subparsers.add_parser("check", help="Run verification checks")
-    check_parser.add_argument("session", nargs="?", help="Session file (default: session.md)")
-    check_parser.add_argument("--fix", action="store_true", help="Run auto-fix commands first")
-
-    refresh_parser = subparsers.add_parser("refresh", help="Re-expand marked references")
-    refresh_parser.add_argument("session", nargs="?", help="Session file (default: session.md)")
-    refresh_parser.add_argument("--url", action="store_true", help="Also refresh URL blocks")
-    refresh_parser.add_argument("--dry-run", action="store_true", help="Preview without modifying")
-
-    cfg_parser = subparsers.add_parser("cfg", help="View or update configuration")
-    cfg_parser.add_argument("action", nargs="?", help="Config field or 'reset'")
-    cfg_parser.add_argument("value", nargs="?", help="Value to set")
-
-    help_parser = subparsers.add_parser("help", help="Show help")
-    help_parser.add_argument("command", nargs="?", help="Command to get help for")
-
-    if len(sys.argv) > 1 and sys.argv[1] in ("--help", "-h"):
-        sys.argv[1] = "help"
-
-    args = sys.argv[1:]
-    if (
-        not args
-        or args[0].startswith("-")
-        or args[0] not in ("chat", "init", "apply", "check", "refresh", "cfg", "help")
-    ):
-        args = ["chat"] + args
-
-    parsed = parser.parse_args(args)
-
-    if parsed.command == "init":
-        sys.exit(cmd_init(parsed))
-    elif parsed.command == "apply":
-        sys.exit(cmd_apply(parsed))
-    elif parsed.command == "check":
-        sys.exit(cmd_check(parsed))
-    elif parsed.command == "refresh":
-        sys.exit(cmd_refresh(parsed))
-    elif parsed.command == "cfg":
-        sys.exit(cmd_cfg(parsed))
-    elif parsed.command == "help":
-        sys.exit(cmd_help(parsed))
-    else:
-        sys.exit(cmd_chat(parsed))
+    """Entry point for the CLI."""
+    app()
 
 
 if __name__ == "__main__":

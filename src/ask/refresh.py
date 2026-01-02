@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ask.config import load_config
+from ask.errors import AskError
 from ask.expand import expand_directory, expand_file, expand_url
 from ask.output import output
 from ask.types import Config
@@ -250,8 +251,7 @@ def print_refresh_result(result: RefreshResult, dry_run: bool = False) -> None:
     total = result.files_refreshed + result.dirs_refreshed + result.urls_refreshed
 
     if total == 0 and not result.errors:
-        output.info("No marker blocks found to refresh")
-        return
+        raise AskError("No marker blocks found to refresh")
 
     # Build summary
     parts: list[str] = []
