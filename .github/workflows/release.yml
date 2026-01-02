@@ -16,9 +16,6 @@ jobs:
           - os: ubuntu-latest
             target: linux-amd64
             binary: ask
-          - os: ubuntu-24.04-arm64
-            target: linux-arm64
-            binary: ask
           - os: macos-latest
             target: darwin-arm64
             binary: ask
@@ -104,12 +101,6 @@ jobs:
           cd artifacts/ask-linux-amd64
           chmod +x ask
           tar -cJf ../../release/ask-${{ steps.version.outputs.version }}-linux-amd64.tar.xz ask
-          cd ../..
-          
-          # Linux arm64
-          cd artifacts/ask-linux-arm64
-          chmod +x ask
-          tar -cJf ../../release/ask-${{ steps.version.outputs.version }}-linux-arm64.tar.xz ask
           cd ../..
           
           # Darwin arm64

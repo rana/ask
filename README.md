@@ -1,6 +1,6 @@
 # ask
 
-AI conversations through Markdown with Claude AWS Bedrock.
+AI conversations through Markdown files.
 
 Develop software in markdown, reference files with `[​[path]​]`, run `ask`, and AI responds directly in your file. The session file is the conversation—editable, searchable, and under your control.
 
@@ -14,11 +14,6 @@ Download the latest release for your platform from [GitHub Releases](https://git
 # Linux (amd64)
 curl -LO https://github.com/rana/ask/releases/latest/download/ask-VERSION-linux-amd64.tar.xz
 tar -xJf ask-VERSION-linux-amd64.tar.xz
-sudo mv ask /usr/local/bin/
-
-# Linux (arm64)
-curl -LO https://github.com/rana/ask/releases/latest/download/ask-VERSION-linux-arm64.tar.xz
-tar -xJf ask-VERSION-linux-arm64.tar.xz
 sudo mv ask /usr/local/bin/
 
 # macOS (Apple Silicon)
