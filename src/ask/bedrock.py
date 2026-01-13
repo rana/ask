@@ -110,17 +110,18 @@ def find_profile(model_type: ModelType) -> InferenceProfile:
             "Check AWS Bedrock console for available models",
         )
 
-    # Sort by preferred region, then version
+    # Sort by preferred region, then version (descending), then date (descending)
     preferred_region = config.region
 
     def sort_key(m: dict[str, Any]) -> tuple[int, int, int, str]:
         region_priority = 0 if m["region"] == preferred_region else 1
         v = cast(dict[str, Any], m["version"])
+        # Negate major/minor for descending sort, negate date by reversing string
         return (
             region_priority,
             -cast(int, v["major"]),
             -cast(int, v["minor"]),
-            cast(str, v["date"]),
+            _negate_date(cast(str, v["date"])),
         )
 
     matches.sort(key=sort_key)
@@ -132,6 +133,15 @@ def find_profile(model_type: ModelType) -> InferenceProfile:
     )
 
 
+def _negate_date(date: str) -> str:
+    """Negate a date string for descending sort.
+
+    Converts each digit to its 9's complement so string comparison
+    gives descending order. E.g., "20250514" -> "79749485"
+    """
+    return "".join(str(9 - int(c)) if c.isdigit() else c for c in date)
+
+
 def _extract_region_from_arn(arn: str) -> str:
     """Extract AWS region from an ARN."""
     match = re.search(r"arn:aws:bedrock:([^:]+):", arn)
@@ -139,7 +149,16 @@ def _extract_region_from_arn(arn: str) -> str:
 
 
 def _parse_model_version(model_id: str) -> dict[str, Any]:
-    """Parse version info from a model ID."""
+    """Parse version info from a model ID.
+
+    Model IDs look like:
+    - anthropic.claude-opus-4-5-20251101-v1:0
+    - anthropic.claude-opus-4-20250514-v1:0
+    - anthropic.claude-3-opus-20240229-v1:0
+
+    Returns dict with major, minor, and date.
+    """
+    # Extract 8-digit date
     date_match = re.search(r"(\d{8})", model_id)
     date = date_match.group(1) if date_match else "00000000"
 
@@ -147,10 +166,11 @@ def _parse_model_version(model_id: str) -> dict[str, Any]:
     version_parts: list[int] = []
 
     for part in parts:
-        if part.isdigit():
-            version_parts.append(int(part))
+        # Stop when we hit the date - don't include it as a version number
         if part == date:
             break
+        if part.isdigit():
+            version_parts.append(int(part))
 
     major = version_parts[0] if version_parts else 3
     minor = version_parts[1] if len(version_parts) > 1 else 0
