@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TextIO
 
 from ask.config import load_config
-from ask.errors import ParseError
+from ask.errors import AskError, ParseError
 from ask.expand import expand_references
 from ask.parser import parse_turns
 from ask.types import Message, MessageContent, Session, Turn
@@ -78,22 +78,31 @@ def validate_session(session: Session) -> None:
         )
 
 
-def expand_and_save_session(path: str, session: Session) -> tuple[bool, int]:
+def expand_session(path: str) -> tuple[bool, int]:
     """Expand references in last human turn and save if changed.
 
     Returns (was_expanded, file_count).
+
+    Raises AskError if no references found to expand.
     """
     config = load_config()
+    session = read_session(path)
 
     last_human = session.turns[session.last_human_turn_index]
 
-    if "[[" not in last_human.content:
-        return False, 0
+    # Check for unexpanded references (without ZWS)
+    if "[[" not in last_human.content or "\u200b" in last_human.content.split("[[")[0]:
+        # No raw references found - check if there are any at all
+        import re
+
+        pattern = re.compile(r"\[\[([^\]\u200B]+)\]\]")
+        if not pattern.search(last_human.content):
+            raise AskError("No references to expand")
 
     expanded_content, file_count = expand_references(last_human.content, config)
 
     if expanded_content == last_human.content:
-        return False, 0
+        raise AskError("No references to expand")
 
     file_path = Path(path)
     original = file_path.read_text(encoding="utf-8")
@@ -112,7 +121,7 @@ def expand_and_save_session(path: str, session: Session) -> tuple[bool, int]:
             break
 
     if start_idx is None:
-        return False, 0
+        raise AskError("Cannot find human turn to expand")
 
     if end_idx is None:
         end_idx = len(lines)
@@ -161,7 +170,7 @@ class SessionWriter:
         self.next_turn_number = next_turn_number
         self.buffer: list[str] = []
         self._started = False
-        self._file_handle: TextIO = self.path.open("a", encoding="utf-8")  # noqa: SIM115
+        self._file_handle: TextIO = self.path.open("a", encoding="utf-8")
 
     def write(self, text: str) -> None:
         """Write a chunk of AI response."""

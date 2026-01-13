@@ -17,7 +17,7 @@ from ask.output import output
 from ask.refresh import print_refresh_result, refresh_session
 from ask.session import (
     SessionWriter,
-    expand_and_save_session,
+    expand_session,
     read_session,
     turns_to_messages,
     validate_session,
@@ -57,7 +57,6 @@ def main_callback(
     ] = False,
 ) -> None:
     """ask — AI conversations through Markdown files."""
-    # If no command provided, default to chat
     if ctx.invoked_subcommand is None:
         ctx.invoke(chat)
 
@@ -87,12 +86,6 @@ def chat(
         model_type = model or config.model
 
         sess = read_session(str(session))
-
-        expanded, file_count = expand_and_save_session(str(session), sess)
-        if expanded:
-            output.success(f"Expanded {file_count} file{'s' if file_count != 1 else ''}")
-            sess = read_session(str(session))
-
         validate_session(sess)
 
         profile = find_profile(model_type)
@@ -216,6 +209,45 @@ def init(
     output.info(f"1. Add your question to {file_path}")
     cmd_suffix = "" if str(file_path) == "session.md" else f" {file_path}"
     output.info(f"2. Run: ask{cmd_suffix}")
+
+
+@app.command(name="expand")
+def expand_cmd(
+    session: Annotated[
+        Path,
+        typer.Argument(help="Session file"),
+    ] = Path("session.md"),
+) -> None:
+    """Expand [[references]] in the last human turn."""
+    if not session.exists():
+        if session.name == "session.md":
+            output.error("No session.md found")
+            output.info("Run 'ask init' to create session.md")
+        else:
+            output.error(f"File not found: {session}")
+        raise typer.Exit(1)
+
+    try:
+        _, file_count = expand_session(str(session))
+
+        output.success(f"Expanded {file_count} file{'s' if file_count != 1 else ''}")
+        output.info(output.dim(f"Updated {session}"))
+
+    except AskError as e:
+        output.error(e.message)
+        if e.help_text:
+            output.blank()
+            output.info(e.help_text)
+        raise typer.Exit(1) from None
+    except Exception as e:
+        if isinstance(e, SystemExit):
+            raise
+        ask_error = AskError.from_exception(e)
+        output.error(ask_error.message)
+        if ask_error.help_text:
+            output.blank()
+            output.info(ask_error.help_text)
+        raise typer.Exit(1) from None
 
 
 @app.command(name="apply")
@@ -515,7 +547,6 @@ def cfg(
                 output.field_dim("region", "(no preference)")
 
             output.field("filter", "on" if config.filter else "off")
-            output.field("web", "on" if config.web else "off")
 
             exclude = config.exclude or Config.default_exclude()
             output.field("exclude", f"{len(exclude)} patterns")

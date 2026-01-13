@@ -67,13 +67,9 @@ def load_config() -> Config:
         filter_raw = data.get("filter", True)
         filter_val = bool(filter_raw) if isinstance(filter_raw, bool) else True
 
-        web_raw = data.get("web", True)
-        web_val = bool(web_raw) if isinstance(web_raw, bool) else True
-
         exclude_raw = data.get("exclude")
         exclude: list[str] | None = None
         if isinstance(exclude_raw, list):
-            # Cast the list to known type at boundary
             raw_list = cast(list[object], exclude_raw)
             exclude = [str(item) for item in raw_list if isinstance(item, str)]
 
@@ -83,7 +79,6 @@ def load_config() -> Config:
             max_tokens=max_tokens,
             region=region,
             filter=filter_val,
-            web=web_val,
             exclude=exclude,
         )
     except json.JSONDecodeError as e:
@@ -117,9 +112,6 @@ def _format_config_with_comments(config: Config) -> str:
         "",
         "  // Strip comments from expanded files",
         f'  "filter": {str(config.filter).lower()},',
-        "",
-        "  // Enable URL expansion",
-        f'  "web": {str(config.web).lower()},',
     ]
 
     if config.max_tokens is not None:
@@ -196,12 +188,10 @@ def update_config(field: str, value: str | float | int | bool) -> None:
         config.region = str_value
     elif field == "filter":
         config.filter = _parse_bool(value)
-    elif field == "web":
-        config.web = _parse_bool(value)
     else:
         raise ConfigError(
             f"Unknown config field: {field}",
-            "Valid fields: model, temperature, tokens, region, filter, web",
+            "Valid fields: model, temperature, tokens, region, filter",
         )
 
     save_config(config)

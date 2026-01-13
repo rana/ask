@@ -2,6 +2,7 @@
 
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 from ask.refresh import (
     find_marker_blocks,
@@ -313,7 +314,7 @@ def test_refresh_writes_changes_when_not_dry_run() -> None:
     """Refresh writes changes when not dry run."""
     with tempfile.TemporaryDirectory() as tmpdir:
         test_file = Path(tmpdir) / "test.py"
-        test_file.write_text("# updated")
+        test_file.write_text("updated = True")
 
         session_path = Path(tmpdir) / "session.md"
         session_path.write_text(f"""<!-- file: {test_file} -->
@@ -321,10 +322,12 @@ old
 <!-- /file -->
 """)
 
-        refresh_session(str(session_path), dry_run=False)
+        # Mock load_config to return filter=False so content isn't stripped
+        with patch("ask.refresh.load_config", return_value=Config(filter=False)):
+            refresh_session(str(session_path), dry_run=False)
 
         new_content = session_path.read_text()
-        assert "# updated" in new_content
+        assert "updated = True" in new_content
 
 
 def test_refresh_skips_existing_error_markers() -> None:

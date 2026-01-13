@@ -60,7 +60,6 @@ class StreamError:
 
 StreamEvent = StreamChunk | StreamEnd | StreamError
 
-
 ModelType = Literal["opus", "sonnet", "haiku"]
 
 
@@ -81,7 +80,6 @@ class Config:
     max_tokens: int | None = None
     region: str | None = None
     filter: bool = True
-    web: bool = True
     exclude: list[str] | None = None
 
     @staticmethod
@@ -92,6 +90,7 @@ class Config:
             "node_modules/**",
             "vendor/**",
             "*.lock",
+            "uv.lock",
             "bun.lockb",
             "dist/**",
             "build/**",
@@ -100,9 +99,6 @@ class Config:
             ".nuxt/**",
             "*.min.js",
             "*.min.css",
-            "test/**",
-            "tests/**",
-            "__tests__/**",
             "coverage/**",
             "*.test.ts",
             "*.spec.ts",
