@@ -5,6 +5,7 @@ from ask.bedrock import (
     _parse_model_version,  # pyright: ignore[reportPrivateUsage]
 )
 
+
 class TestParseModelVersion:
     """Tests for _parse_model_version function."""
 

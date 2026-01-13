@@ -88,9 +88,6 @@ def _is_url(ref: str) -> bool:
 
 def _expand_url(url: str, config: Config) -> tuple[str, int]:
     """Expand a URL reference."""
-    if not config.web:
-        return f"[{ZWS}[{url}]{ZWS}]", 0
-
     response = httpx.get(
         url,
         headers={
