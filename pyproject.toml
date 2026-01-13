@@ -6,11 +6,11 @@ readme = "README.md"
 requires-python = ">=3.12"
 authors = [{ name = "Rana Ian" }]
 dependencies = [
-    "boto3>=1.42.20",
+    "boto3>=1.42.27",
     "httpx>=0.28.0",
     "readability-lxml>=0.8.1",
     "markdownify>=1.2.2",
-    "typer>=0.15.0",
+    "typer>=0.21.1",
 ]
 
 [project.scripts]
@@ -20,10 +20,10 @@ ask = "ask.cli:main"
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
-    "ruff>=0.9.0",
-    "pyright>=1.1.390",
+    "ruff>=0.14.11",
+    "pyright>=1.1.408",
     "boto3-stubs[bedrock,bedrock-runtime]>=1.35.0", # Critical for strict typing with AWS
-    "pyinstaller>=6.0.0",  # For building standalone binaries
+    "pyinstaller>=6.18.0",  # For building standalone binaries
 ]
 
 [build-system]
